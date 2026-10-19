@@ -44,6 +44,12 @@ export const mtlsReloadsTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+export const webhookDeadLetterWriteFailuresTotal = new Counter({
+  name: "webhook_dead_letter_write_failures_total",
+  help: "Total number of failed webhook dead-letter persistence attempts",
+  registers: [metricsRegistry],
+});
+
 export const rateLimitRejections = new Counter({
   name: "http_rate_limit_rejections_total",
   help: "Total number of requests rejected by the rate limiter (HTTP 429)",
