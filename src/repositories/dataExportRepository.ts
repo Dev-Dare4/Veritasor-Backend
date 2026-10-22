@@ -65,6 +65,16 @@ export async function getDataExport(exportId: string): Promise<DataExport | null
 }
 
 /**
+ * Get export by ID, only if it belongs to the given user
+ */
+export async function getExportForUser(exportId: string, userId: string): Promise<DataExport | null> {
+  const exportRecord = await getDataExport(exportId)
+  if (!exportRecord) return null
+  if (exportRecord.userId !== userId) return null
+  return exportRecord
+}
+
+/**
  * Update export status
  */
 export async function updateDataExportStatus(
@@ -110,6 +120,22 @@ export async function createDownloadToken(exportId: string): Promise<string> {
   ))
 
   return token
+}
+
+/**
+ * Read the export id behind a download token without consuming it.
+ */
+export async function peekDownloadToken(token: string): Promise<string | null> {
+  const client = getRedisClient()
+  const tokenKey = `${TOKEN_KEY_PREFIX}${token}`
+
+  const data = await redisCircuitBreaker.execute(() => client.get(tokenKey))
+  if (!data) return null
+
+  const tokenData = JSON.parse(data)
+  if (tokenData.downloaded) return null
+
+  return tokenData.exportId
 }
 
 /**

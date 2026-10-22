@@ -61,7 +61,8 @@ usersRouter.get('/me/export/:token', requireAuth, async (req: any, res: any) => 
       return res.status(400).json({ message: 'Invalid export token' })
     }
 
-    // Resolve readiness before consuming the one-time download token.
+    // Look up the export behind the token without consuming it, so owner
+    // checks can fail closed without burning the caller's token.
     const exportId = await peekDownloadToken(token)
 
     if (!exportId) {
@@ -69,14 +70,14 @@ usersRouter.get('/me/export/:token', requireAuth, async (req: any, res: any) => 
       return res.status(410).json({ message: 'Export token not found, already downloaded, or expired' })
     }
 
-    const exportStatus = await getExportStatus(exportId)
+    // Get the export status for the authenticated user only.
+    // Returns null for other users' exports so ids cannot be enumerated.
+    const exportStatus = await getExportStatus(exportId, userId)
 
     if (!exportStatus) {
       return res.status(404).json({ message: 'Export not found' })
     }
 
-    // Verify export belongs to the authenticated user
-    // Note: In production, we'd check the userId from the export metadata
     if (exportStatus.status !== 'completed') {
       return res.status(202).json({
         exportId,
@@ -96,6 +97,13 @@ usersRouter.get('/me/export/:token', requireAuth, async (req: any, res: any) => 
       return res.status(404).json({ message: 'Export archive not found' })
     }
 
+    // Only now that the caller is confirmed to be the owner do we consume
+    // the one-time token.
+    const consumedExportId = await consumeDownloadToken(token)
+    if (!consumedExportId || consumedExportId !== exportId) {
+      return res.status(410).json({ message: 'Export token not found, already downloaded, or expired' })
+    }
+
     // Return as downloadable file
     res.setHeader('Content-Type', 'application/octet-stream')
     res.setHeader('Content-Disposition', `attachment; filename="gdpr-export-${exportId}.enc"`)
@@ -113,12 +121,13 @@ usersRouter.get('/me/export/:token', requireAuth, async (req: any, res: any) => 
 usersRouter.get('/me/export/:exportId/status', requireAuth, async (req: any, res: any) => {
   try {
     const { exportId } = req.params
+    const userId = req.user.id
 
     if (!exportId || typeof exportId !== 'string' || exportId.length < 32) {
       return res.status(400).json({ message: 'Invalid export ID' })
     }
 
-    const exportStatus = await getExportStatus(exportId)
+    const exportStatus = await getExportStatus(exportId, userId)
 
     if (!exportStatus) {
       return res.status(404).json({ message: 'Export not found' })
