@@ -238,6 +238,16 @@ export const errorHandler = (
     requestId,
   });
 
+  // Set Retry-After header if present on the error or context
+  if (isAppError(err) && err.status === 429) {
+    const retryAfterMs =
+      (err as any).retryAfterMs ??
+      (typeof err.context?.retryAfterMs === "number" ? err.context.retryAfterMs : undefined);
+    if (typeof retryAfterMs === "number" && retryAfterMs > 0 && !res.getHeader("Retry-After")) {
+      res.setHeader("Retry-After", String(Math.ceil(retryAfterMs / 1000)));
+    }
+  }
+
   // Create standardized error envelope
   const errorEnvelope = createErrorEnvelope(err, requestId);
 

@@ -81,18 +81,21 @@ export class SignupError extends Error {
   public readonly type: SignupErrorType;
   public readonly statusCode: number;
   public readonly details?: string[];
+  public readonly retryAfterMs?: number;
 
   constructor(
     message: string,
     type: SignupErrorType,
     statusCode: number = 400,
     details?: string[],
+    retryAfterMs?: number,
   ) {
     super(message);
     this.name = "SignupError";
     this.type = type;
     this.statusCode = statusCode;
     this.details = details;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -352,13 +355,6 @@ export async function signup(
   const rateLimitCheck = rateLimiter.checkLimit(clientIp, canonicalEmail);
 
   if (!rateLimitCheck.allowed) {
-    // Apply progressive delay if configured
-    if (rateLimitCheck.suggestedDelayMs > 0) {
-      await new Promise((resolve) =>
-        setTimeout(resolve, rateLimitCheck.suggestedDelayMs),
-      );
-    }
-
     await addTimingDelay(fullConfig.minOperationTimeMs, startTime);
 
     logger.warn(
@@ -375,6 +371,7 @@ export async function signup(
       "RATE_LIMITED",
       429,
       [rateLimitCheck.blockReason || "Rate limit exceeded"],
+      rateLimitCheck.suggestedDelayMs,
     );
   }
 

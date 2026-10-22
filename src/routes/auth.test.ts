@@ -32,10 +32,18 @@ vi.mock("../services/auth/signup.js", () => ({
   SignupError: class extends Error {
     public type: string;
     public statusCode: number;
-    constructor(message: string, type: string, statusCode: number) {
+    public retryAfterMs?: number;
+    constructor(
+      message: string,
+      type: string,
+      statusCode: number,
+      details?: string[],
+      retryAfterMs?: number,
+    ) {
       super(message);
       this.type = type;
       this.statusCode = statusCode;
+      this.retryAfterMs = retryAfterMs;
     }
   },
   getSignupRateLimitHeaders: vi.fn(() => ({})),
@@ -211,11 +219,18 @@ describe("GET /api/v1/auth/me", () => {
 
 describe("signupErrorToAppError", () => {
   it("maps RATE_LIMITED to RateLimitError", () => {
-    const signupErr = new SignupError("Too many requests", "RATE_LIMITED", 429);
+    const signupErr = new SignupError(
+      "Too many requests",
+      "RATE_LIMITED",
+      429,
+      undefined,
+      12000,
+    );
     const result = signupErrorToAppError(signupErr);
     
     expect(result).toBeInstanceOf(RateLimitError);
     expect(result.message).toBe("Too many requests");
+    expect((result as RateLimitError).retryAfterMs).toBe(12000);
   });
 
   it("maps EMAIL_EXISTS to ConflictError", () => {
