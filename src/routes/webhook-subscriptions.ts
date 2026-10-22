@@ -47,10 +47,11 @@ webhookSubscriptionsRouter.get(
     query.businessId = businessId;
 
     const result = await repo.list(query);
+    const publicSubscriptions = result.data.map(repo.toPublicSubscription);
 
     res.status(200).json({
       status: "success",
-      data: result.data,
+      data: publicSubscriptions,
       ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
     });
   }),
@@ -72,7 +73,7 @@ webhookSubscriptionsRouter.get(
       throw new NotFoundError("Webhook subscription not found");
     }
 
-    res.status(200).json({ status: "success", data: subscription });
+    res.status(200).json({ status: "success", data: repo.toPublicSubscription(subscription) });
   }),
 );
 
@@ -100,8 +101,12 @@ webhookSubscriptionsRouter.post(
     }
 
     const subscription = await repo.create(businessId, req.body);
+    const publicSubscription = repo.toPublicSubscription(subscription);
 
-    res.status(201).json({ status: "success", data: subscription });
+    res.status(201).json({
+      status: "success",
+      data: { ...publicSubscription, secret: subscription.secret },
+    });
   }),
 );
 
@@ -126,7 +131,7 @@ webhookSubscriptionsRouter.patch(
       throw new NotFoundError("Webhook subscription not found");
     }
 
-    res.status(200).json({ status: "success", data: updated });
+    res.status(200).json({ status: "success", data: repo.toPublicSubscription(updated) });
   }),
 );
 
