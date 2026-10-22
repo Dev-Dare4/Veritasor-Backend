@@ -186,26 +186,10 @@ export async function handleCallback(
     return { success: false, error: "No access token in response" };
   }
 
-  // Never log or return the access token
-  try {
-    store.saveToken(shopHost, accessToken);
-  } catch (err) {
-    logger.error(
-      {
-        event: "shopify_callback_token_save_error",
-        shop,
-        state,
-        err: err instanceof Error ? err.message : String(err),
-      },
-      "Shopify token save failed",
-    );
-    return { success: false, error: "Failed to persist Shopify token" };
-  }
-
   let existingShopifyIntegration;
   try {
     existingShopifyIntegration = (
-      await integrationRepository.listByUserId(stateRecord.userId)
+      await integrationRepository.listByBusinessId(stateRecord.businessId)
     ).find((integration) => integration.provider === "shopify");
   } catch (err) {
     logger.error(
@@ -225,12 +209,18 @@ export async function handleCallback(
     existingShopifyIntegration.externalId !== shopHost
   ) {
     try {
-      await integrationRepository.deleteById(
+      const deleted = await integrationRepository.deleteById(
         stateRecord.businessId,
         existingShopifyIntegration.id,
       );
 
-      store.deleteToken(existingShopifyIntegration.externalId);
+      if (!deleted) {
+        logger.error(
+          { event: "shopify_callback_integration_delete_error", shop, state },
+          "Failed to remove existing Shopify integration",
+        );
+        return { success: false, error: "Failed to update Shopify integration" };
+      }
     } catch (err) {
       logger.error(
         {
@@ -306,6 +296,32 @@ export async function handleCallback(
       );
       return { success: false, error: "Failed to persist Shopify integration" };
     }
+  }
+
+  // Never log or return the access token. Update the cache only after the
+  // integration has been successfully persisted.
+  try {
+    if (
+      existingShopifyIntegration &&
+      existingShopifyIntegration.externalId !== shopHost
+    ) {
+      store.deleteToken(
+        stateRecord.businessId,
+        existingShopifyIntegration.externalId,
+      );
+    }
+    store.saveToken(stateRecord.businessId, shopHost, accessToken);
+  } catch (err) {
+    logger.error(
+      {
+        event: "shopify_callback_token_save_error",
+        shop,
+        state,
+        err: err instanceof Error ? err.message : String(err),
+      },
+      "Shopify token save failed",
+    );
+    return { success: false, error: "Failed to persist Shopify token" };
   }
 
   return { success: true, shop: shopHost };
