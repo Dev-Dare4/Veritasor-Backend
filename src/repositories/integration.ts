@@ -169,7 +169,7 @@ export async function deleteById(businessId: string, id: string): Promise<boolea
 }
 
 /**
- * Clear all integrations from storage (for testing purposes)
+ * Clear of integrations from storage (for testing purposes)
  * @internal
  */
 export function clearAll(): void {

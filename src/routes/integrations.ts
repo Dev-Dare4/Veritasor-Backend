@@ -213,7 +213,7 @@ router.post('/connect',
         });
       }
 
-      console.error('Error initiating integration connection:', error);
+      console.error('Error initiating integration connection', error);
       res.status(500).json({
         error: 'Internal Server Error',
         message: 'Failed to initiate connection',
@@ -229,7 +229,7 @@ router.post('/connect',
  */
 router.delete(`/:integrationId(${INTEGRATION_ID_PATTERN})`,
   requireBusinessAuth,
-  requirePermissions(IntegrationPermission.DISCONNECT_OWN, { checkOwnership: true }),
+  requirePermissions(IntegrationPermission.DISCONNECT_OWN, { checkOwnership: true, ownershipParam: 'integrationId' }),
   requirePolicy('delete', 'integration', {
     resourceId: (req) => req.params.integrationId,
     resourceTenantId: async (req) => (await getById(req.params.integrationId))?.businessId,
@@ -289,7 +289,7 @@ router.delete(`/:integrationId(${INTEGRATION_ID_PATTERN})`,
  */
 router.get(`/:integrationId(${INTEGRATION_ID_PATTERN})`,
   requireBusinessAuth,
-  requirePermissions(IntegrationPermission.READ_OWN, { checkOwnership: true }),
+  requirePermissions(IntegrationPermission.READ_OWN, { checkOwnership: true, ownershipParam: 'integrationId' }),
   requirePolicy('read', 'integration', {
     resourceId: (req) => req.params.integrationId,
     resourceTenantId: async (req) => (await getById(req.params.integrationId))?.businessId,
@@ -347,7 +347,7 @@ router.get(`/:integrationId(${INTEGRATION_ID_PATTERN})`,
  * Build the provider authorization URL for a supported integration.
  *
  * Exported so the URL contract (and the unsupported-provider throw) can be
- * exercised directly by unit tests — the HTTP `/connect` route validates the
+ * exercised directly by unit tests — the HTTP /connect route validates the
  * provider against a Zod enum first, so this helper's `default` branch is not
  * reachable through the router alone.
  */
