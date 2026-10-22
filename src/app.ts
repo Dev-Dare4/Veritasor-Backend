@@ -1,5 +1,5 @@
 import express, { type Express } from "express";
-import type { Server } from "node:http";
+import http, { type Server } from "node:http";
 import type { Server as HttpsServer } from "node:https";
 import type { Request, Response, NextFunction } from "express";
 import fs from "node:fs/promises";
@@ -217,65 +217,78 @@ export async function startServer(port: number): Promise<Server | HttpsServer> {
   const application = createApp(readinessReport);
   const { attachAttestationStream } = await import("./ws/attestationStream.js");
 
-  return new Promise(async (resolve) => {
-    let server: Server | HttpsServer;
-    const httpsServerRef: { current?: HttpsServer } = {};
+  let server: Server | HttpsServer;
+  const httpsServerRef: { current?: HttpsServer } = {};
 
-    if (config.mtls.enabled) {
-      const https = await import("node:https");
-      let ca: Buffer;
-      let cert: Buffer;
-      let key: Buffer;
+  if (config.mtls.enabled) {
+    const https = await import("node:https");
+    let ca: Buffer;
+    let cert: Buffer;
+    let key: Buffer;
 
-      if (config.mtls.spiffe.enabled) {
-        const svidProvider = createSvidProvider({
-          trustDomain: config.mtls.spiffe.trustDomain,
-          client: createGrpcWorkloadApiClient({
-            socketAddress: config.mtls.spiffe.workloadApiSocket,
-          }),
-          refreshRatio: config.mtls.spiffe.refreshRatio,
-          onRotate: (material) => {
-            const httpsServer = httpsServerRef.current;
-            if (httpsServer) {
-              applyRotatedTlsMaterial(httpsServer, material);
-            }
-          },
-        });
-        await svidProvider.start();
-        activeSvidProvider = svidProvider;
-        ({ ca, cert, key } = svidProvider.getTlsMaterial());
-      } else {
-        [ca, cert, key] = await Promise.all([
-          fs.readFile(config.mtls.caPath!),
-          fs.readFile(config.mtls.certPath!),
-          fs.readFile(config.mtls.keyPath!),
-        ]);
-      }
-
-      server = https.createServer(
-        {
-          ca,
-          cert,
-          key,
-          // These server-level options persist across setSecureContext() calls.
-          requestCert: true,
-          rejectUnauthorized: false, // We handle rejection in middleware
+    if (config.mtls.spiffe.enabled) {
+      const svidProvider = createSvidProvider({
+        trustDomain: config.mtls.spiffe.trustDomain,
+        client: createGrpcWorkloadApiClient({
+          socketAddress: config.mtls.spiffe.workloadApiSocket,
+        }),
+        refreshRatio: config.mtls.spiffe.refreshRatio,
+        onRotate: (material) => {
+          httpsServerRef.current?.setSecureContext({
+            ca: material.ca,
+            cert: material.cert,
+            key: material.key,
+            requestCert: true,
+            rejectUnauthorized: false,
+          });
         },
-        application
-      );
-      httpsServerRef.current = server as HttpsServer;
-      if (!config.mtls.spiffe.enabled) {
-        registerMtlsServer(httpsServerRef.current);
-      }
+      });
+      await svidProvider.start();
+      activeSvidProvider = svidProvider;
+      ({ ca, cert, key } = svidProvider.getTlsMaterial());
     } else {
-      // Create regular HTTP server
-      server = application.listen(port);
+      [ca, cert, key] = await Promise.all([
+        fs.readFile(config.mtls.caPath!),
+        fs.readFile(config.mtls.certPath!),
+        fs.readFile(config.mtls.keyPath!),
+      ]);
     }
 
-    server.listen(port, () => {
+    server = https.createServer(
+      {
+        ca,
+        cert,
+        key,
+        requestCert: true,
+        rejectUnauthorized: false, // We handle rejection in middleware
+      },
+      application
+    );
+    httpsServerRef.current = server as HttpsServer;
+    if (!config.mtls.spiffe.enabled) {
+      registerMtlsServer(httpsServerRef.current);
+    }
+  } else {
+    // Create regular HTTP server
+    server = http.createServer(application);
+  }
+
+  attachAttestationStream(server);
+
+  return new Promise<Server | HttpsServer>((resolve, reject) => {
+    const onError = (err: Error) => {
+      server.removeListener("listening", onListening);
+      reject(err);
+    };
+
+    const onListening = () => {
+      server.removeListener("error", onError);
       console.log(`[Server] Veritasor Backend listening on port ${port} (mTLS: ${config.mtls.enabled})`);
       resolve(server);
-    });
-    attachAttestationStream(server);
+    };
+
+    server.once("error", onError);
+    server.once("listening", onListening);
+    server.listen(port);
   });
 }
