@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/requireAuth.js';
 import { idempotencyMiddleware } from '../middleware/idempotency.js';
 import { validateBody, validateQuery } from '../middleware/validate.js';
 import * as attestationRepository from '../repositories/attestationRepository.js';

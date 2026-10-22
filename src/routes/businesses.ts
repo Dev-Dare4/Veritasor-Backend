@@ -14,7 +14,7 @@
  */
 
 import { Router } from 'express';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/requireAuth.js';
 import { z } from 'zod';
 import { validateBody, validateQuery } from '../middleware/validate.js';
 import { asyncErrorHandler } from '../middleware/errorHandler.js';
