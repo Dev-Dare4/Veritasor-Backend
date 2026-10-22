@@ -66,30 +66,14 @@ export function stopSpiffeSvidProviderIfNeeded(): void {
 
 export const telemetryReady = initializeOpenTelemetry();
 
+import {
+  prototypePollutionGuard,
+  hasForbiddenKeys,
+  hasForbiddenQuery,
+} from "./middleware/prototypePollution.js";
+
 // Security middleware to reject prototype pollution attempts
-const securityHeadersMiddleware = (req: Request, res: Response, next: NextFunction) => {
-  if (req.query && Object.keys(req.query).some(key => key === '__proto__' || key === 'constructor' || key === 'prototype')) {
-    res.status(400).json({
-      status: 'error',
-      code: 'VALIDATION_ERROR',
-      message: 'Invalid query parameters'
-    });
-    return;
-  }
-
-  if (req.body && typeof req.body === 'object') {
-    if (Object.keys(req.body).some(key => key === '__proto__' || key === 'constructor' || key === 'prototype')) {
-      res.status(400).json({
-        status: 'error',
-        code: 'VALIDATION_ERROR',
-        message: 'Invalid body fields'
-      });
-      return;
-    }
-  }
-
-  next();
-};
+export const securityHeadersMiddleware = prototypePollutionGuard;
 
 export function createApp(readinessReport: StartupReadinessReport): Express {
   const app = express();
@@ -106,6 +90,7 @@ export function createApp(readinessReport: StartupReadinessReport): Express {
 
   // 3. Body Parsing
   app.use(express.json());
+  app.use(securityHeadersMiddleware);
   app.use(createCorsMiddleware());
 
   // Webhook subscription CRUD API (after body parsing)
