@@ -47,14 +47,14 @@ import {
 import { replayFailedSubmissions } from "./startup/replayFailedSubmissions.js";
 import { initializeOpenTelemetry } from "./tracing.js";
 import {
-  startIdempotencySweeper,
-  type IdempotencySweeperHandle,
   startIdempotencySweeperIfNeeded,
   stopIdempotencySweeper,
 } from "./middleware/idempotency.js";
 import {
   startPgBouncerScraperIfNeeded,
 } from "./services/pgbouncerScraper.js";
+
+export { stopIdempotencySweeper };
 
 /** Active SPIFFE SVID provider when mTLS uses the Workload API. */
 let activeSvidProvider: SvidProvider | undefined;

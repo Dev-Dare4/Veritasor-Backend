@@ -938,6 +938,38 @@ export async function startIdempotencySweeper(): Promise<IdempotencySweeperHandl
   };
 }
 
+/** Module-scoped handle to the active background sweeper */
+let activeSweeperHandle: IdempotencySweeperHandle | null = null;
+
+/**
+ * Start the idempotency sweeper if not in test environment and not already running.
+ * Stores the returned IdempotencySweeperHandle in module scope.
+ * Subsequent calls while running are no-ops.
+ */
+export async function startIdempotencySweeperIfNeeded(): Promise<IdempotencySweeperHandle | null> {
+  if (process.env.NODE_ENV === 'test') {
+    return null;
+  }
+  if (activeSweeperHandle) {
+    return activeSweeperHandle;
+  }
+  activeSweeperHandle = await startIdempotencySweeper();
+  return activeSweeperHandle;
+}
+
+/**
+ * Stop the module-scoped idempotency sweeper handle and clear it.
+ * Calling it multiple times is idempotent (no-op when nothing is running).
+ */
+export async function stopIdempotencySweeper(): Promise<void> {
+  if (!activeSweeperHandle) {
+    return;
+  }
+  const handle = activeSweeperHandle;
+  activeSweeperHandle = null;
+  await handle.stop();
+}
+
 export class IdempotencySweeper {
   private readonly store: IdempotencyStore;
   private readonly backend: IdempotencyBackend;
