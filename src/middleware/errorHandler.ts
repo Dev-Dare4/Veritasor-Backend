@@ -48,9 +48,9 @@ type PostgresError = Error & {
 };
 
 type BodyParserError = {
-  type?: unknown;
   status?: unknown;
   statusCode?: unknown;
+  type?: unknown;
 };
 
 const CLIENT_SAFE_POSTGRES_CONFLICT_CODES = new Set([
@@ -90,6 +90,14 @@ function isPostgresError(error: unknown): error is PostgresError {
   );
 }
 
+function getBodyParserErrorType(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("type" in error)) {
+    return undefined;
+  }
+  const type = (error as BodyParserError).type;
+  return typeof type === "string" ? type : undefined;
+}
+
 function normalizeZodIssues(
   error: z.ZodError
 ): Array<{ path: string[]; message: string; code: string }> {
@@ -126,18 +134,15 @@ function createErrorEnvelope(
   if (bodyParserErrorType === "entity.parse.failed") {
     return {
       ...baseEnvelope,
-      vrtCode: VRTErrorCodes.VRT_0002,
-      code: "INVALID_JSON",
+      vrtCode: "INVALID_JSON",
       message: "Invalid JSON payload",
     };
   }
-
   if (bodyParserErrorType === "entity.too.large") {
     return {
       ...baseEnvelope,
-      vrtCode: VRTErrorCodes.VRT_0002,
-      code: "PAYLOAD_TOO_LARGE",
-      message: "Request payload too large",
+      vrtCode: "PAYLOAD_TOO_LARGE",
+      message: "Payload too large",
     };
   }
 
@@ -223,6 +228,18 @@ function createErrorEnvelope(
  * @returns HTTP status code
  */
 function getStatusCode(error: unknown): number {
+  if (typeof error === "object" && error !== null) {
+    const httpError = error as BodyParserError;
+    const clientStatus = [httpError.status, httpError.statusCode].find(
+      (status): status is number =>
+        typeof status === "number" &&
+        Number.isInteger(status) &&
+        status >= 400 &&
+        status <= 499,
+    );
+    if (clientStatus !== undefined) return clientStatus;
+  }
+
   if (isValidationError(error)) {
     return 400;
   }
@@ -274,8 +291,7 @@ export const errorHandler = (
   next: NextFunction
 ): void => {
   if (res.headersSent) {
-    next(err);
-    return;
+    return next(err);
   }
 
   const requestId = res.locals.requestId;
