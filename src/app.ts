@@ -14,7 +14,11 @@ import {
 } from "./middleware/apiVersion.js";
 import { securityHeaders } from "./middleware/securityHeaders.js";
 import { compressionMiddleware } from "./middleware/compression.js";
-import { mtlsMiddleware, registerMtlsServer } from "./middleware/mtls.js";
+import {
+  applyRotatedTlsMaterial,
+  mtlsMiddleware,
+  registerMtlsServer,
+} from "./middleware/mtls.js";
 import { createGrpcWorkloadApiClient } from "./spiffe/workloadApiClient.js";
 import { createSvidProvider, type SvidProvider } from "./spiffe/svidProvider.js";
 import { metricsRegistry } from "./metrics.js";
@@ -230,13 +234,10 @@ export async function startServer(port: number): Promise<Server | HttpsServer> {
           }),
           refreshRatio: config.mtls.spiffe.refreshRatio,
           onRotate: (material) => {
-            httpsServerRef.current?.setSecureContext({
-              ca: material.ca,
-              cert: material.cert,
-              key: material.key,
-              requestCert: true,
-              rejectUnauthorized: false,
-            });
+            const httpsServer = httpsServerRef.current;
+            if (httpsServer) {
+              applyRotatedTlsMaterial(httpsServer, material);
+            }
           },
         });
         await svidProvider.start();
@@ -255,6 +256,7 @@ export async function startServer(port: number): Promise<Server | HttpsServer> {
           ca,
           cert,
           key,
+          // These server-level options persist across setSecureContext() calls.
           requestCert: true,
           rejectUnauthorized: false, // We handle rejection in middleware
         },

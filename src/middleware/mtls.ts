@@ -3,12 +3,24 @@ import fs from "node:fs/promises";
 import tls from "node:tls";
 import type { Server as HttpsServer } from "node:https";
 import { config } from "../config/index.js";
+import type { TlsIdentityMaterial } from "../spiffe/types.js";
 import { mtlsRevocationChecker } from "./mtlsRevocation.js";
 import { extractSpiffeIdFromCert, isSpiffeIdInTrustDomain } from "../spiffe/spiffeId.js";
 import { logger } from "../utils/logger.js";
 import { mtlsHandshakeFailuresTotal, mtlsReloadsTotal } from "../metrics.js";
 
 let activeHttpsServer: HttpsServer | undefined;
+
+export function applyRotatedTlsMaterial(
+  server: HttpsServer,
+  material: Pick<TlsIdentityMaterial, "ca" | "cert" | "key">,
+): void {
+  server.setSecureContext({
+    ca: material.ca,
+    cert: material.cert,
+    key: material.key,
+  });
+}
 
 export function registerMtlsServer(server: HttpsServer): void {
   activeHttpsServer = server;
@@ -32,13 +44,7 @@ export async function reloadMtlsCertificates(): Promise<void> {
     // If invalid, this throws an error.
     tls.createSecureContext({ ca, cert, key });
 
-    activeHttpsServer.setSecureContext({
-      ca,
-      cert,
-      key,
-      requestCert: true,
-      rejectUnauthorized: false,
-    });
+    applyRotatedTlsMaterial(activeHttpsServer, { ca, cert, key });
 
     mtlsReloadsTotal.inc({ outcome: "success" });
     logger.info({ event: "mtls_reload_succeeded" });
