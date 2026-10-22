@@ -1,4 +1,4 @@
-import { integrationRepository } from '../../repositories/integrations.js';
+import { getRazorpayCredentials } from '../../repositories/integration.js';
 
 export type RevenueEntry = {
   id: string;
@@ -26,70 +26,27 @@ export class InvalidPaymentAmountError extends Error {
 }
 
 /**
- * ISO 4217 Currency Exponents mapping.
- * JPY: 0
- * KWD, BHD, OMR: 3
- * Default: 2
- */
-const CURRENCY_EXPONENTS: Record<string, number> = {
-  // 0 decimals
-  JPY: 0,
-  KRW: 0,
-  VND: 0,
-  CLP: 0,
-  PYG: 0,
-  UGX: 0,
-  RWF: 0,
-  // 3 decimals
-  KWD: 3,
-  BHD: 3,
-  OMR: 3,
-  JOD: 3,
-  TND: 3,
-  LYD: 3,
-  IQD: 3,
-};
-
-export function getCurrencyExponent(currency: string): number {
-  const upper = currency?.toUpperCase();
-  if (upper && Object.prototype.hasOwnProperty.call(CURRENCY_EXPONENTS, upper)) {
-    return CURRENCY_EXPONENTS[upper];
-  }
-  return 2;
-}
-
-export function convertMinorToMajor(amountMinor: number, currency: string): number {
-  const exponent = getCurrencyExponent(currency);
-  const factor = Math.pow(10, exponent);
-  return amountMinor / factor;
-}
-
-export interface FetchRazorpayRevenueOptions {
-  timeoutMs?: number;
-  maxPages?: number;
-  pageSize?: number;
-}
-
-const DEFAULT_TIMEOUT_MS = 10_000;
-const DEFAULT_MAX_PAGES = 50;
-const DEFAULT_PAGE_SIZE = 100;
-
-/**
- * Fetch revenue entries from Razorpay for a given business between two ISO dates (inclusive).
- * Loads that business's credentials from the integration repository.
- * Throws a typed `IntegrationNotConnectedError` when there are none.
+ * Fetch revenue entries from Razorpay between two ISO dates (inclusive).
+ * When a business ID is supplied, credentials are loaded from its connected
+ * Razorpay integration. Environment credentials remain available to legacy callers.
  */
 export async function fetchRazorpayRevenue(
   businessId: string,
   startDate: string,
   endDate: string,
-  options: FetchRazorpayRevenueOptions = {}
+  businessId?: string,
 ): Promise<RevenueEntry[]> {
-  const integration = integrationRepository.findByBusinessAndProvider(businessId, 'razorpay');
-  if (!integration || !integration.meta?.apiKeyId || !integration.meta?.apiKeySecret) {
-    throw new IntegrationNotConnectedError(
-      `Razorpay integration not connected for business: ${businessId}`
-    );
+  const businessCredentials = businessId
+    ? await getRazorpayCredentials(businessId)
+    : null;
+  if (businessId && !businessCredentials) {
+    throw new Error(`No Razorpay integration credentials found for business ${businessId}`);
+  }
+
+  const key = businessCredentials?.apiKeyId ?? process.env.RAZORPAY_KEY_ID;
+  const secret = businessCredentials?.apiKeySecret ?? process.env.RAZORPAY_KEY_SECRET;
+  if (!key || !secret) {
+    throw new Error('Missing RAZORPAY_KEY_ID or RAZORPAY_KEY_SECRET environment variables');
   }
 
   const key = integration.meta.apiKeyId;
