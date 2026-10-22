@@ -94,6 +94,7 @@ const securityHeadersMiddleware = (req: Request, res: Response, next: NextFuncti
 export function createApp(readinessReport: StartupReadinessReport): Express {
   const app = express();
 
+  app.set("trust proxy", config.trustProxy);
   app.use(requestLogger);
   app.use(securityHeaders);
   app.use(securityHeadersMiddleware);

@@ -10,6 +10,7 @@ export class ConfigValidationError extends Error {
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(["development", "production", "test"]).default("development"),
+  TRUST_PROXY: z.string().optional(),
   ALLOWED_ORIGINS: z.string().optional(),
   JWT_SECRET: z.string().optional(),
   DATABASE_URL: z.string({
@@ -249,6 +250,24 @@ function parseCsvList(rawValue: string | undefined): string[] {
   return rawValue.split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+function parseTrustProxy(rawValue: string | undefined): number | string[] | false {
+  const value = rawValue?.trim();
+  if (!value) return false;
+  if (/^\d+$/.test(value)) {
+    const hops = Number(value);
+    if (!Number.isSafeInteger(hops)) {
+      throw new ConfigValidationError("TRUST_PROXY hop count must be a safe integer");
+    }
+    return hops;
+  }
+
+  const entries = value.split(",").map((entry) => entry.trim());
+  if (entries.some((entry) => entry.length === 0)) {
+    throw new ConfigValidationError("TRUST_PROXY must be a hop count or a comma-separated proxy list");
+  }
+  return entries;
+}
+
 function parseMtlsConfig(parsedEnv: z.infer<typeof envSchema>) {
   const enabled = parseBooleanEnv("MTLS_ENABLED", parsedEnv.MTLS_ENABLED, false);
   const spiffeEnabled = parseBooleanEnv(
@@ -297,6 +316,7 @@ const mtlsConfig = parseMtlsConfig(parsedEnv);
 
 export const config = {
   env: parsedEnv.NODE_ENV,
+  trustProxy: parseTrustProxy(parsedEnv.TRUST_PROXY),
   jwtSecret: parsedEnv.JWT_SECRET as string,
   databaseUrl: parsedEnv.DATABASE_URL,
   db: {

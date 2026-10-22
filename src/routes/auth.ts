@@ -26,15 +26,16 @@ import {
 export const authRouter = Router();
 
 const authRouteRateLimiters = {
-  login: rateLimiter({ bucket: "auth:login", max: 10, algorithm: "sliding" }),
+  login: rateLimiter({ bucket: "auth:login", max: 10, algorithm: "sliding", failureMode: "closed" }),
   forgotPassword: rateLimiter({
     bucket: "auth:forgot-password",
     max: 5,
     algorithm: "sliding",
+    failureMode: "closed",
   }),
-  refresh: rateLimiter({ bucket: "auth:refresh", max: 20 }),
-  resetPassword: rateLimiter({ bucket: "auth:reset-password", max: 5 }),
-  me: rateLimiter({ bucket: "auth:me", max: 60 }),
+  refresh: rateLimiter({ bucket: "auth:refresh", max: 20, failureMode: "closed" }),
+  resetPassword: rateLimiter({ bucket: "auth:reset-password", max: 5, failureMode: "closed" }),
+  me: rateLimiter({ bucket: "auth:me", max: 60, failureMode: "closed" }),
 };
 
 /**
@@ -52,11 +53,7 @@ export function signupErrorToAppError(err: SignupError): AppError | RateLimitErr
 }
 
 function getClientIp(req: Request): string {
-  const forwarded = req.headers["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
-  }
-  return req.ip || req.socket.remoteAddress || "unknown";
+  return req.ip || "unknown";
 }
 
 function applySignupRateLimitHeaders(
@@ -158,7 +155,7 @@ authRouter.post(
 
 authRouter.get(
   "/me",
-  authRouteRateLimiters.me,
   requireAuth,
+  authRouteRateLimiters.me,
   asyncErrorHandler(handleMe),
 );
