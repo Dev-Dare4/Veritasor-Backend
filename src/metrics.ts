@@ -78,6 +78,13 @@ export const sorobanRetryBudgetExhaustedTotal = new Counter({
   registers: [metricsRegistry],
 });
 
+export const sorobanCircuitBreakerState = new Gauge({
+  name: "soroban_circuit_breaker_state",
+  help: "Soroban RPC circuit breaker state (0=CLOSED, 1=OPEN, 2=HALF_OPEN)",
+  labelNames: ["rpc_url"] as const,
+  registers: [metricsRegistry],
+});
+
 export const submissionReplayProgress = new Gauge({
   name: "submission_replay_progress",
   help: "Progress of failed Soroban submission replay (0 = not started, 1 = completed)",
