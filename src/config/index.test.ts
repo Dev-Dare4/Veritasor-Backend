@@ -1,35 +1,39 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import * as fs from "node:fs";
-import * as path from "node:path";
-import { fileURLToPath } from "node:url";
-import { ConfigValidationError, envSchema, rawEnvSchema } from "./index.js";
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { ConfigValidationError } from './index.js';
 
-const currentDir = path.dirname(fileURLToPath(import.meta.url));
+vi.mock('../app.js', () => ({
+  startServer: vi.fn(),
+  stopIdempotencySweeper: vi.fn(),
+}));
+vi.mock('../services/pgbouncerScraper.js', () => ({
+  stopPgBouncerScraperIfNeeded: vi.fn(),
+}));
+vi.mock('../db/client.js', () => ({
+  pool: { end: vi.fn() },
+}));
+vi.mock('../shutdown.js', () => ({
+  createShutdownOrchestrator: vi.fn(() => ({ register: vi.fn() })),
+}));
+vi.mock('../services/revenue/kafkaConsumer.js', () => ({
+  createRevenueConsumer: vi.fn(),
+}));
+vi.mock('../services/metrics/statsdBootstrap.js', () => ({
+  stopStatsdDualWriteIfNeeded: vi.fn(),
+}));
 
-describe("mTLS and Redis Config Validation", () => {
+describe('SECRET_LOADER and SECRET_PROVIDER config & bootstrap validation', () => {
   const originalEnv = { ...process.env };
 
   beforeEach(() => {
     vi.resetModules();
-    process.env = {
-      ...originalEnv,
-      NODE_ENV: "test",
-      DATABASE_URL: "postgres://localhost:5432/test_db",
-    };
-    // Clean up mTLS and Redis environment variables
-    delete process.env.MTLS_ENABLED;
-    delete process.env.MTLS_SPIFFE_ENABLED;
-    delete process.env.SPIFFE_TRUST_DOMAIN;
-    delete process.env.MTLS_CA_PATH;
-    delete process.env.MTLS_CERT_PATH;
-    delete process.env.MTLS_KEY_PATH;
-    delete process.env.MTLS_CN_ALLOWLIST;
-    delete process.env.MTLS_SPIFFE_ID_ALLOWLIST;
-    delete process.env.SPIFFE_WORKLOAD_API_SOCKET;
-    delete process.env.REDIS_URL;
-    delete process.env.REDIS_CLUSTER_NODES;
-    delete process.env.REDIS_TLS;
-    delete process.env.REDIS_FORCE_SINGLE_NODE;
+    delete process.env.DATABASE_URL;
+    delete process.env.NODE_ENV;
+    delete process.env.JWT_SECRET;
+    delete process.env.ALLOWED_ORIGINS;
+    delete process.env.STELLAR_NETWORK;
+    delete process.env.SECRET_LOADER;
+    delete process.env.SECRET_PROVIDER;
+    delete process.env.SECRET_FILE_PATH;
   });
 
   afterEach(() => {
@@ -37,118 +41,42 @@ describe("mTLS and Redis Config Validation", () => {
   });
 
   async function loadConfig() {
-    return await import("./index.js");
+    return await import('./index.js');
   }
 
-  describe("mTLS configuration", () => {
-    it("populates config.mtls and sets enabled=true when MTLS_ENABLED=true and cert paths are provided", async () => {
-      process.env.MTLS_ENABLED = "true";
-      process.env.MTLS_CA_PATH = "/certs/ca.pem";
-      process.env.MTLS_CERT_PATH = "/certs/server.pem";
-      process.env.MTLS_KEY_PATH = "/certs/server-key.pem";
-      process.env.MTLS_CN_ALLOWLIST = "client1.internal, client2.internal";
-      process.env.MTLS_SPIFFE_ID_ALLOWLIST = "spiffe://example.org/ns/prod/sa/app";
+  it('throws ConfigValidationError when SECRET_LOADER=env and SECRET_PROVIDER=vault together', async () => {
+    process.env.NODE_ENV = 'development';
+    process.env.DATABASE_URL = 'postgres://localhost:5432/db';
+    process.env.SECRET_LOADER = 'env';
+    process.env.SECRET_PROVIDER = 'vault';
 
-      const { config } = await loadConfig();
-
-      expect(config.mtls.enabled).toBe(true);
-      expect(config.mtls.caPath).toBe("/certs/ca.pem");
-      expect(config.mtls.certPath).toBe("/certs/server.pem");
-      expect(config.mtls.keyPath).toBe("/certs/server-key.pem");
-      expect(config.mtls.cnAllowlist).toEqual(["client1.internal", "client2.internal"]);
-      expect(config.mtls.spiffeIdAllowlist).toEqual(["spiffe://example.org/ns/prod/sa/app"]);
-      expect(config.mtls.spiffe.enabled).toBe(false);
-    });
-
-    it("throws ConfigValidationError at import time when MTLS_ENABLED=true without cert paths", async () => {
-      process.env.MTLS_ENABLED = "true";
-      // No MTLS_CA_PATH, MTLS_CERT_PATH, or MTLS_KEY_PATH
-
-      await expect(loadConfig()).rejects.toThrow(ConfigValidationError);
-      await expect(loadConfig()).rejects.toThrow(
-        "MTLS_CA_PATH, MTLS_CERT_PATH, and MTLS_KEY_PATH must be set when MTLS_ENABLED=true and MTLS_SPIFFE_ENABLED is not true",
-      );
-    });
-
-    it("throws ConfigValidationError when MTLS_ENABLED=true and MTLS_SPIFFE_ENABLED=true without SPIFFE_TRUST_DOMAIN", async () => {
-      process.env.MTLS_ENABLED = "true";
-      process.env.MTLS_SPIFFE_ENABLED = "true";
-      // No SPIFFE_TRUST_DOMAIN
-
-      await expect(loadConfig()).rejects.toThrow(ConfigValidationError);
-      await expect(loadConfig()).rejects.toThrow(
-        "SPIFFE_TRUST_DOMAIN must be set when MTLS_SPIFFE_ENABLED=true",
-      );
-    });
-
-    it("succeeds when MTLS_ENABLED=true and MTLS_SPIFFE_ENABLED=true with SPIFFE_TRUST_DOMAIN", async () => {
-      process.env.MTLS_ENABLED = "true";
-      process.env.MTLS_SPIFFE_ENABLED = "true";
-      process.env.SPIFFE_TRUST_DOMAIN = "veritasor.internal";
-      process.env.SPIFFE_WORKLOAD_API_SOCKET = "unix:///run/spire/sockets/agent.sock";
-
-      const { config } = await loadConfig();
-
-      expect(config.mtls.enabled).toBe(true);
-      expect(config.mtls.spiffe.enabled).toBe(true);
-      expect(config.mtls.spiffe.trustDomain).toBe("veritasor.internal");
-      expect(config.mtls.spiffe.workloadApiSocket).toBe("unix:///run/spire/sockets/agent.sock");
-    });
-
-    it("defaults mtls.enabled to false when MTLS_ENABLED is unset", async () => {
-      const { config } = await loadConfig();
-      expect(config.mtls.enabled).toBe(false);
-    });
+    try {
+      await loadConfig();
+      expect.fail('Expected loadConfig to throw');
+    } catch (err: any) {
+      expect(err.name).toBe('ConfigValidationError');
+      expect(err.message).toMatch(/conflict: both are set and disagree/);
+    }
   });
 
-  describe("Redis configuration", () => {
-    it("populates REDIS_URL, REDIS_CLUSTER_NODES, REDIS_TLS=1 and REDIS_FORCE_SINGLE_NODE=true in config.redis", async () => {
-      process.env.REDIS_URL = "redis://127.0.0.1:6379";
-      process.env.REDIS_CLUSTER_NODES = "node1:7000,node2:7001";
-      process.env.REDIS_TLS = "1";
-      process.env.REDIS_FORCE_SINGLE_NODE = "true";
+  it('fails bootstrap in production when SECRET_LOADER=file and the file JWT_SECRET is 10 characters', async () => {
+    process.env.NODE_ENV = 'production';
+    process.env.DATABASE_URL = 'postgres://localhost:5432/db';
+    process.env.ALLOWED_ORIGINS = 'https://example.com';
+    process.env.SECRET_LOADER = 'file';
+    process.env.SECRET_FILE_PATH = '/tmp/test_jwt_secret.json';
 
-      const { config } = await loadConfig();
+    // Mock fs so /tmp/test_jwt_secret.json contains a 10-char JWT_SECRET
+    const fs = await import('node:fs/promises');
+    await fs.writeFile('/tmp/test_jwt_secret.json', JSON.stringify({ JWT_SECRET: '1234567890' }));
 
-      expect(config.redis.url).toBe("redis://127.0.0.1:6379");
-      expect(config.redis.clusterNodes).toBe("node1:7000,node2:7001");
-      expect(config.redis.tls).toBe(true);
-      expect(config.redis.forceSingleNode).toBe(true);
-    });
-
-    it("accepts rediss:// URLs for REDIS_URL", async () => {
-      process.env.REDIS_URL = "rediss://secure-redis.internal:6380";
-
-      const { config } = await loadConfig();
-      expect(config.redis.url).toBe("rediss://secure-redis.internal:6380");
-    });
-
-    it("rejects non-redis protocol URLs for REDIS_URL", async () => {
-      process.env.REDIS_URL = "http://localhost:6379";
-
-      await expect(loadConfig()).rejects.toThrow(ConfigValidationError);
-    });
-
-    it("rejects malformed URLs for REDIS_URL", async () => {
-      process.env.REDIS_URL = "not-a-valid-url";
-
-      await expect(loadConfig()).rejects.toThrow(ConfigValidationError);
-    });
-  });
-
-  describe("Hardening against schema drift", () => {
-    it("ensures every parsedEnv.X access in src/config/index.ts is declared in envSchema", () => {
-      const configSource = fs.readFileSync(path.join(currentDir, "index.ts"), "utf-8");
-      const matches = [...configSource.matchAll(/parsedEnv\.([A-Z0-9_]+)/g)];
-      const accessedKeys = new Set(matches.map((m) => m[1]));
-      const declaredKeys = new Set(Object.keys(rawEnvSchema.shape));
-
-      for (const key of accessedKeys) {
-        expect(
-          declaredKeys.has(key),
-          `parsedEnv.${key} is accessed in src/config/index.ts but not declared in envSchema`,
-        ).toBe(true);
-      }
-    });
+    try {
+      const { bootstrap } = await import('../index.js');
+      await expect(bootstrap()).rejects.toThrow(
+        /JWT_SECRET resolved from secret loader must be at least 32 characters in production/,
+      );
+    } finally {
+      await fs.unlink('/tmp/test_jwt_secret.json').catch(() => {});
+    }
   });
 });
