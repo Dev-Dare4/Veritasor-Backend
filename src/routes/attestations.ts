@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { NextFunction, Request, Response, Router } from 'express';
 import { z } from 'zod';
-import { requireAuth } from '../middleware/auth.js';
+import { requireAuth } from '../middleware/requireAuth.js';
 import { idempotencyMiddleware } from '../middleware/idempotency.js';
 import { validateBody, validateQuery } from '../middleware/validate.js';
 import * as attestationRepository from '../repositories/attestationRepository.js';
@@ -203,8 +203,60 @@ async function resolveBusinessIdForUser(userId: string): Promise<string | null> 
   return null;
 }
 
-async function listByBusinessId(businessId: string, page: number, limit: number): Promise<{ items: RouteAttestation[], total: number }> {
-  const result = await attestationRepository.list(db, { businessId }, { limit, offset: (page - 1) * limit });
+async function resolveAuthorizedBusinessId(
+  req: Request,
+  requestedId?: string | null,
+): Promise<string> {
+  const userId = req.user!.id;
+  const userBusinessId = await resolveBusinessIdForUser(userId);
+  const role = req.user?.role;
+
+  if (role === 'admin') {
+    if (requestedId) {
+      const repo = businessRepository as Record<string, unknown>;
+      if (typeof repo.getById === 'function') {
+        const business = await (repo.getById as (id: string) => Promise<{ id: string } | null>)(requestedId);
+        if (!business) {
+          throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found');
+        }
+        return requestedId;
+      }
+      return requestedId;
+    }
+    if (!userBusinessId) {
+      throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found for user');
+    }
+    return userBusinessId;
+  }
+
+  if (requestedId) {
+    if (!userBusinessId) {
+      throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found for user');
+    }
+    if (requestedId !== userBusinessId) {
+      throw createHttpError(403, 'FORBIDDEN', 'Cannot access attestation for another business');
+    }
+    return userBusinessId;
+  }
+
+  if (!userBusinessId) {
+    throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found for user');
+  }
+
+  return userBusinessId;
+}
+
+async function listByBusinessId(
+  businessId: string,
+  page: number,
+  limit: number,
+  filters: { period?: string; status?: 'submitted' | 'revoked' } = {},
+): Promise<{ items: RouteAttestation[], total: number }> {
+  const result = await attestationRepository.list(
+    db,
+    { businessId, period: filters.period, status: filters.status },
+    { limit, offset: (page - 1) * limit },
+  );
 
   const items = result.items.map((item: Attestation) => ({
     id: item.id,
@@ -394,26 +446,15 @@ attestationsRouter.get(
   validateQuery(listQuerySchema),
   asyncHandler(async (req, res) => {
     const query = req.query as unknown as z.infer<typeof listQuerySchema>;
-    const businessId = query.businessId ?? (await resolveBusinessIdForUser(req.user!.id));
-
-    if (!businessId) {
-      throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found for user');
-    }
+    const businessId = await resolveAuthorizedBusinessId(req, query.businessId);
 
     const { page, limit } = getPagination({ page: query.page, limit: query.limit });
-    const { items, total } = await listByBusinessId(businessId, page, limit);
+    const { items, total } = await listByBusinessId(businessId, page, limit, {
+      period: query.period,
+      status: query.status,
+    });
 
-    // Filter server-side if query params present (repository list handles businessId but not period/status yet)
-    let filteredItems = items;
-    if (query.period || query.status) {
-      filteredItems = items.filter(item => {
-        if (query.period && item.period !== query.period) return false;
-        if (query.status && (item.status ?? 'submitted') !== query.status) return false;
-        return true;
-      });
-    }
-
-    const paginated = formatPaginatedResponse(filteredItems, total, page, limit);
+    const paginated = formatPaginatedResponse(items, total, page, limit);
 
     res.status(200).json({
       status: 'success',
@@ -433,11 +474,7 @@ attestationsRouter.get(
   requireAuth,
   asyncHandler(async (req, res) => {
     const id = parseIdParam(req.params.id);
-    const businessId = await resolveBusinessIdForUser(req.user!.id);
-
-    if (!businessId) {
-      throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found for user');
-    }
+    const businessId = await resolveAuthorizedBusinessId(req);
 
     const attestation = await getById(id, businessId);
     if (!attestation) {
@@ -458,10 +495,7 @@ attestationsRouter.get(
     const query = req.query as unknown as z.infer<typeof proofQuerySchema>;
     const { leaves, leafIndex } = query;
 
-    const businessId = await resolveBusinessIdForUser(req.user!.id);
-    if (!businessId) {
-      throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found for user');
-    }
+    const businessId = await resolveAuthorizedBusinessId(req);
 
     const attestation = await getById(id, businessId);
     if (!attestation || attestation.status === 'revoked') {
@@ -504,16 +538,7 @@ attestationsRouter.post(
   validateBody(submitBodySchema),
   asyncHandler(async (req, res) => {
     const payload = req.body as z.infer<typeof submitBodySchema>;
-    const userBusinessId = await resolveBusinessIdForUser(req.user!.id);
-    const businessId = payload.businessId ?? userBusinessId;
-
-    if (!businessId) {
-      throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found for user');
-    }
-
-    if (payload.businessId && userBusinessId && payload.businessId !== userBusinessId) {
-      throw createHttpError(403, 'FORBIDDEN', 'Cannot submit attestation for another business');
-    }
+    const businessId = await resolveAuthorizedBusinessId(req, payload.businessId);
 
     let merkleRoot = payload.merkleRoot;
     let attestationSummary: AttestationRevenueSummary | undefined;
@@ -634,11 +659,7 @@ attestationsRouter.post(
 async function handleRevoke(req: Request, res: Response): Promise<void> {
   try {
     const id = parseIdParam(req.params.id);
-    const businessId = await resolveBusinessIdForUser(req.user!.id);
-
-    if (!businessId) {
-      throw createHttpError(404, 'BUSINESS_NOT_FOUND', 'Business not found for user');
-    }
+    const businessId = await resolveAuthorizedBusinessId(req);
 
     const attestation = await getById(id, businessId);
     if (!attestation) {
