@@ -248,6 +248,24 @@ if (parsedEnv.NODE_ENV === "development" && !parsedEnv.JWT_SECRET) {
   parsedEnv.JWT_SECRET = "default_dev_secret_for_local_testing_only";
 }
 
+const exposeResetLink = parseBooleanEnv(
+  "EXPOSE_RESET_LINK_IN_RESPONSE",
+  parsedEnv.EXPOSE_RESET_LINK_IN_RESPONSE,
+  false,
+);
+
+if (exposeResetLink) {
+  if (isProduction) {
+    logger.warn(
+      "EXPOSE_RESET_LINK_IN_RESPONSE is enabled but ignored in production.",
+    );
+  } else {
+    logger.warn(
+      "EXPOSE_RESET_LINK_IN_RESPONSE is enabled. Raw password reset links will be exposed in API responses outside production.",
+    );
+  }
+}
+
 /**
  * CORS allowed origins.
  * - Dev: * (allow all) unless ALLOWED_ORIGINS is set.
@@ -574,5 +592,8 @@ export const config = {
       ? parseBooleanEnv("GRAPHQL_DEV_BYPASS", parsedEnv.GRAPHQL_DEV_BYPASS ?? parsedEnv.ALLOW_ARBITRARY_OPERATIONS, false)
       : !isProduction,
     persistedQuerySecret: parsedEnv.PERSISTED_QUERY_SECRET || 'default-dev-secret-do-not-use-in-prod',
+  },
+  auth: {
+    exposeResetLinkInResponse: exposeResetLink && !isProduction,
   },
 } as const;
