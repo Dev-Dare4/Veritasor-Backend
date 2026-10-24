@@ -113,12 +113,13 @@ async function handleMtls(
 
   const cert = req.socket.getPeerCertificate(true);
 
-  if (!cert || !req.socket.authorized) {
-    const reason = !cert ? "no_client_cert" : "unauthorized";
+  if (!cert || Object.keys(cert).length === 0 || !req.socket.authorized) {
+    const hasCert = cert && Object.keys(cert).length > 0;
+    const reason = !hasCert ? "no_client_cert" : "unauthorized";
     mtlsHandshakeFailuresTotal.inc({ reason });
     logger.warn({
       event: "mtls_unauthorized",
-      reason: req.socket.authorizationError || "no_client_cert",
+      reason: req.socket.authorizationError || reason,
     });
     return res.status(495).json({
       status: "error",
@@ -200,7 +201,7 @@ async function handleMtls(
     }
   }
 
-  authenticated.clientCN = cn;
+  (req as MtlsAuthenticatedRequest).clientCN = cn;
   next();
 }
 
